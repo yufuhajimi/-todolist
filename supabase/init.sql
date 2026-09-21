@@ -6,6 +6,7 @@
 -- 1. 创建 tasks 表 (任务)
 CREATE TABLE IF NOT EXISTS tasks (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     category TEXT DEFAULT '工作',
     priority TEXT DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 -- 2. 创建 inspirations 表 (灵感)
 CREATE TABLE IF NOT EXISTS inspirations (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
     type TEXT DEFAULT 'text' CHECK (type IN ('text', 'image', 'voice')),
     title TEXT NOT NULL,
     content TEXT DEFAULT '',
@@ -32,6 +34,7 @@ CREATE TABLE IF NOT EXISTS inspirations (
 -- 3. 创建 goals 表 (目标)
 CREATE TABLE IF NOT EXISTS goals (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
     category TEXT DEFAULT '个人',
     title TEXT NOT NULL,
     bg_image TEXT DEFAULT 'https://images.unsplash.com/photo-1499750310107-5fef28a66643?q=80&w=1000',
@@ -44,6 +47,7 @@ CREATE TABLE IF NOT EXISTS goals (
 -- 4. 创建 milestones 表 (里程碑)
 CREATE TABLE IF NOT EXISTS milestones (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
     goal_id UUID NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     completed BOOLEAN DEFAULT FALSE,
@@ -53,7 +57,7 @@ CREATE TABLE IF NOT EXISTS milestones (
 
 -- ============================================
 -- Row Level Security (RLS) 策略
--- 暂时设置为公开访问，后续可添加用户认证
+-- 每个用户只能访问自己的数据。anon 角色没有任何业务数据权限。
 -- ============================================
 
 -- 启用 RLS
@@ -62,26 +66,33 @@ ALTER TABLE inspirations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE goals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE milestones ENABLE ROW LEVEL SECURITY;
 
--- 创建公开访问策略 (开发阶段)
-CREATE POLICY "允许公开读取 tasks" ON tasks FOR SELECT USING (true);
-CREATE POLICY "允许公开插入 tasks" ON tasks FOR INSERT WITH CHECK (true);
-CREATE POLICY "允许公开更新 tasks" ON tasks FOR UPDATE USING (true);
-CREATE POLICY "允许公开删除 tasks" ON tasks FOR DELETE USING (true);
+CREATE POLICY "用户只能读取自己的 tasks" ON tasks FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "用户只能创建自己的 tasks" ON tasks FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "用户只能更新自己的 tasks" ON tasks FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "用户只能删除自己的 tasks" ON tasks FOR DELETE USING (auth.uid() = user_id);
 
-CREATE POLICY "允许公开读取 inspirations" ON inspirations FOR SELECT USING (true);
-CREATE POLICY "允许公开插入 inspirations" ON inspirations FOR INSERT WITH CHECK (true);
-CREATE POLICY "允许公开更新 inspirations" ON inspirations FOR UPDATE USING (true);
-CREATE POLICY "允许公开删除 inspirations" ON inspirations FOR DELETE USING (true);
+CREATE POLICY "用户只能读取自己的 inspirations" ON inspirations FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "用户只能创建自己的 inspirations" ON inspirations FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "用户只能更新自己的 inspirations" ON inspirations FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "用户只能删除自己的 inspirations" ON inspirations FOR DELETE USING (auth.uid() = user_id);
 
-CREATE POLICY "允许公开读取 goals" ON goals FOR SELECT USING (true);
-CREATE POLICY "允许公开插入 goals" ON goals FOR INSERT WITH CHECK (true);
-CREATE POLICY "允许公开更新 goals" ON goals FOR UPDATE USING (true);
-CREATE POLICY "允许公开删除 goals" ON goals FOR DELETE USING (true);
+CREATE POLICY "用户只能读取自己的 goals" ON goals FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "用户只能创建自己的 goals" ON goals FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "用户只能更新自己的 goals" ON goals FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "用户只能删除自己的 goals" ON goals FOR DELETE USING (auth.uid() = user_id);
 
-CREATE POLICY "允许公开读取 milestones" ON milestones FOR SELECT USING (true);
-CREATE POLICY "允许公开插入 milestones" ON milestones FOR INSERT WITH CHECK (true);
-CREATE POLICY "允许公开更新 milestones" ON milestones FOR UPDATE USING (true);
-CREATE POLICY "允许公开删除 milestones" ON milestones FOR DELETE USING (true);
+CREATE POLICY "用户只能读取自己的 milestones" ON milestones FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "用户只能创建自己的 milestones" ON milestones FOR INSERT
+    WITH CHECK (auth.uid() = user_id AND EXISTS (SELECT 1 FROM goals WHERE goals.id = milestones.goal_id AND goals.user_id = auth.uid()));
+CREATE POLICY "用户只能更新自己的 milestones" ON milestones FOR UPDATE
+    USING (auth.uid() = user_id)
+    WITH CHECK (auth.uid() = user_id AND EXISTS (SELECT 1 FROM goals WHERE goals.id = milestones.goal_id AND goals.user_id = auth.uid()));
+CREATE POLICY "用户只能删除自己的 milestones" ON milestones FOR DELETE USING (auth.uid() = user_id);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_inspirations_user_id ON inspirations(user_id);
+CREATE INDEX IF NOT EXISTS idx_goals_user_id ON goals(user_id);
+CREATE INDEX IF NOT EXISTS idx_milestones_user_id ON milestones(user_id);
 
 -- ============================================
 -- 创建索引提升查询性能

@@ -38,6 +38,7 @@ import { TabId, InspirationItem, TaskItem, GoalItem, Milestone } from './types';
 import { tasksService } from './src/services/tasks';
 import { inspirationsService } from './src/services/inspirations';
 import { goalsService } from './src/services/goals';
+import { auth, supabase, AuthUser } from './src/lib/supabase';
 
 // --- Utility Functions ---
 const formatDate = (date: Date): string => {
@@ -59,6 +60,61 @@ const LoadingSpinner: React.FC<{ message?: string }> = ({ message = '加载中..
   </div>
 );
 
+const AuthScreen: React.FC = () => {
+  const [mode, setMode] = useState<'signIn' | 'signUp'>('signIn');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setMessage(null);
+    setIsSubmitting(true);
+    try {
+      const result = mode === 'signIn'
+        ? await auth.signIn(email.trim(), password)
+        : await auth.signUp(email.trim(), password);
+      if (result.error) throw result.error;
+      if (mode === 'signUp' && !result.data.session) {
+        setMessage('注册成功，请先完成邮箱确认，再回来登录。');
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '认证失败，请稍后重试');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="flex min-h-[100dvh] items-center justify-center bg-background-dark px-6 font-sans text-white">
+      <form onSubmit={submit} className="w-full max-w-md space-y-6 rounded-3xl border border-white/10 bg-surface-dark p-8 shadow-2xl">
+        <div>
+          <p className="mb-2 text-xs font-black uppercase tracking-[0.25em] text-primary">MindFlow</p>
+          <h1 className="text-3xl font-black">{mode === 'signIn' ? '欢迎回来' : '创建你的空间'}</h1>
+          <p className="mt-2 text-sm text-slate-400">数据只对当前登录用户可见。</p>
+        </div>
+        <label className="block space-y-2 text-sm font-bold text-slate-300">
+          邮箱
+          <input type="email" required value={email} onChange={event => setEmail(event.target.value)} className="w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-white outline-none focus:border-primary" autoComplete="email" />
+        </label>
+        <label className="block space-y-2 text-sm font-bold text-slate-300">
+          密码
+          <input type="password" required minLength={6} value={password} onChange={event => setPassword(event.target.value)} className="w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-white outline-none focus:border-primary" autoComplete={mode === 'signIn' ? 'current-password' : 'new-password'} />
+        </label>
+        {message && <p className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-200">{message}</p>}
+        <button disabled={isSubmitting} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-4 font-black text-black transition-opacity disabled:cursor-wait disabled:opacity-50">
+          {isSubmitting && <Loader2 className="h-5 w-5 animate-spin" />}
+          {mode === 'signIn' ? '登录' : '注册'}
+        </button>
+        <button type="button" onClick={() => { setMode(mode === 'signIn' ? 'signUp' : 'signIn'); setMessage(null); }} className="w-full text-sm font-bold text-slate-400 hover:text-primary">
+          {mode === 'signIn' ? '还没有账号？创建一个' : '已有账号？返回登录'}
+        </button>
+      </form>
+    </div>
+  );
+};
+
 // --- Sub-Components ---
 
 /**
@@ -70,7 +126,8 @@ const Sidebar: React.FC<{
   onFilterSelect: (filter: TaskFilter) => void;
   activeFilter: TaskFilter;
   counts: { all: number; daily: number; overdue: number };
-}> = ({ isOpen, onClose, onFilterSelect, activeFilter, counts }) => {
+  onSignOut: () => void;
+}> = ({ isOpen, onClose, onFilterSelect, activeFilter, counts, onSignOut }) => {
   if (!isOpen) return null;
 
   const items: { id: TaskFilter | 'settings'; icon: React.ReactNode; label: string; count?: number }[] = [
@@ -117,7 +174,7 @@ const Sidebar: React.FC<{
           ))}
         </nav>
 
-        <button className="shrink-0 flex items-center gap-4 p-4 text-red-500 font-bold hover:bg-red-500/10 rounded-2xl transition-all mt-auto">
+        <button onClick={onSignOut} className="shrink-0 flex items-center gap-4 p-4 text-red-500 font-bold hover:bg-red-500/10 rounded-2xl transition-all mt-auto">
           <LogOut className="w-5 h-5" />
           <span>退出登录</span>
         </button>
@@ -417,6 +474,9 @@ const App: React.FC = () => {
   // Loading and error states
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -433,8 +493,35 @@ const App: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(getTodayStr());
   const [taskFilter, setTaskFilter] = useState<TaskFilter>(null);
 
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setUser(data.session?.user ?? null);
+      setAuthLoading(false);
+    });
+
+    const { data: authSubscription } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
+    });
+
+    return () => {
+      mounted = false;
+      authSubscription.subscription.unsubscribe();
+    };
+  }, []);
+
   // --- Load Data from Supabase ---
   const loadData = useCallback(async () => {
+    if (!user) {
+      setTasks([]);
+      setInbox([]);
+      setGoals([]);
+      setIsLoading(false);
+      return;
+    }
     try {
       setIsLoading(true);
       setError(null);
@@ -454,11 +541,16 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const handleSignOut = async () => {
+    const { error: signOutError } = await auth.signOut();
+    if (signOutError) setActionError(signOutError.message);
+  };
 
   // --- Handlers ---
   const handleSaveTask = async (data: Partial<TaskItem>) => {
@@ -472,6 +564,7 @@ const App: React.FC = () => {
       }
     } catch (err) {
       console.error('保存任务失败:', err);
+      setActionError('保存任务失败，请检查登录状态或网络连接');
     }
     setEditingTask(null);
   };
@@ -487,6 +580,7 @@ const App: React.FC = () => {
       }
     } catch (err) {
       console.error('保存灵感失败:', err);
+      setActionError('保存灵感失败，请检查登录状态或网络连接');
     }
     setEditingInspiration(null);
   };
@@ -502,6 +596,7 @@ const App: React.FC = () => {
       }
     } catch (err) {
       console.error('保存目标失败:', err);
+      setActionError('保存目标失败，请检查登录状态或网络连接');
     }
     setEditingGoal(null);
   };
@@ -512,6 +607,7 @@ const App: React.FC = () => {
       setInbox(prev => prev.filter(i => i.id !== id));
     } catch (err) {
       console.error('删除灵感失败:', err);
+      setActionError('删除灵感失败，请稍后重试');
     }
   };
 
@@ -524,6 +620,7 @@ const App: React.FC = () => {
       setTasks(ts => ts.map(t => t.id === id ? updated : t));
     } catch (err) {
       console.error('切换任务状态失败:', err);
+      setActionError('更新任务失败，请稍后重试');
     }
   };
 
@@ -533,6 +630,7 @@ const App: React.FC = () => {
       setTasks(ts => ts.filter(t => t.id !== id));
     } catch (err) {
       console.error('删除任务失败:', err);
+      setActionError('删除任务失败，请稍后重试');
     }
   };
 
@@ -584,6 +682,16 @@ const App: React.FC = () => {
     return selectedDate === getTodayStr() ? '今天' : selectedDate;
   };
 
+  if (authLoading) {
+    return (
+      <div className="flex h-[100dvh] w-full items-center justify-center bg-background-dark font-sans">
+        <LoadingSpinner message="正在检查登录状态..." />
+      </div>
+    );
+  }
+
+  if (!user) return <AuthScreen />;
+
   // Show loading or error state
   if (isLoading) {
     return (
@@ -614,6 +722,11 @@ const App: React.FC = () => {
     <div className="flex flex-col h-[100dvh] w-full bg-background-dark overflow-hidden font-sans select-none">
 
       <main className="flex-1 relative overflow-y-auto no-scrollbar pb-[120px]">
+        {actionError && (
+          <button onClick={() => setActionError(null)} className="mx-6 mt-4 w-[calc(100%-3rem)] rounded-2xl border border-red-400/20 bg-red-400/10 p-4 text-left text-sm font-bold text-red-200">
+            {actionError} · 点击关闭
+          </button>
+        )}
         {activeTab === 'tasks' && (
           <div className="p-6 space-y-8 animate-in fade-in duration-500">
             <div className="flex items-center justify-between">
@@ -759,6 +872,7 @@ const App: React.FC = () => {
         onFilterSelect={handleFilterSelect}
         activeFilter={taskFilter}
         counts={counts}
+        onSignOut={handleSignOut}
       />
       <TaskModal isOpen={isTaskModalOpen} onClose={() => setIsTaskModalOpen(false)} onSave={handleSaveTask} initialData={editingTask} />
       <InspirationModal isOpen={isInspirationModalOpen} onClose={() => setIsInspirationModalOpen(false)} onSave={handleSaveInspiration} initialData={editingInspiration} />

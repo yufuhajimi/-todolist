@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import type { User } from '@supabase/supabase-js';
 
 // 从环境变量读取 Supabase 配置
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -11,9 +12,18 @@ if (!supabaseUrl || !supabaseAnonKey) {
 // 创建 Supabase 客户端
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+export const auth = {
+  signIn: (email: string, password: string) =>
+    supabase.auth.signInWithPassword({ email, password }),
+  signUp: (email: string, password: string) =>
+    supabase.auth.signUp({ email, password }),
+  signOut: () => supabase.auth.signOut(),
+};
+
 // 数据库表类型定义
 export interface DbTask {
   id: string;
+  user_id: string;
   title: string;
   category: string;
   priority: 'low' | 'medium' | 'high';
@@ -26,6 +36,7 @@ export interface DbTask {
 
 export interface DbInspiration {
   id: string;
+  user_id: string;
   type: 'text' | 'image' | 'voice';
   title: string;
   content: string;
@@ -38,6 +49,7 @@ export interface DbInspiration {
 
 export interface DbGoal {
   id: string;
+  user_id: string;
   category: string;
   title: string;
   bg_image: string;
@@ -49,9 +61,12 @@ export interface DbGoal {
 
 export interface DbMilestone {
   id: string;
+  user_id: string;
   goal_id: string;
   title: string;
   completed: boolean;
   sort_order: number;
   created_at: string;
 }
+
+export type AuthUser = User;

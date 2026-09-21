@@ -130,10 +130,14 @@ export const goalsService = {
         let milestones: Milestone[] = [];
         if (updates.milestones !== undefined) {
             // 删除现有里程碑
-            await supabase
+            const { error: deleteError } = await supabase
                 .from('milestones')
                 .delete()
                 .eq('goal_id', id);
+            if (deleteError) {
+                console.error('删除旧里程碑失败:', deleteError);
+                throw deleteError;
+            }
 
             // 插入新里程碑
             if (updates.milestones.length > 0) {
